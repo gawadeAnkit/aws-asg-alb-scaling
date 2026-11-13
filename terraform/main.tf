@@ -1,3 +1,7 @@
+# main.tf - AWS High Availability Auto-Scaling & Load Balanced Web Cluster
+# Candidate: Ankit Gawade <ankitgawade1234@gmail.com>
+# Role: DevOps Engineer | Itvedant Education Pvt. Ltd.
+
 terraform {
   required_version = ">= 1.5.0"
 
@@ -5,6 +9,10 @@ terraform {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.5"
     }
   }
 }
@@ -15,6 +23,8 @@ provider "aws" {
   default_tags {
     tags = {
       Project   = "ALB-ASG-AutoHealing"
+      Candidate = "Ankit Gawade"
+      Role      = "DevOps Engineer"
       ManagedBy = "Terraform"
     }
   }
@@ -41,12 +51,19 @@ data "aws_subnets" "public" {
   }
 }
 
-data "aws_ssm_parameter" "al2023_ami" {
-  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+# Lookup Pre-Baked Production Golden AMI
+data "aws_ami" "golden_ami" {
+  most_recent = true
+  owners      = ["self"]
+
+  filter {
+    name   = "name"
+    values = ["devops-golden-ami-al2023-v1"]
+  }
 }
 
 # ========================================================
-# 1. IAM Role for SSM Session Manager (Zero SSH Keys Needed)
+# 1. IAM Role for SSM Session Manager & EFS Client Access
 # ========================================================
 resource "aws_iam_role" "ec2_ssm" {
   name = "asg-alb-ec2-ssm-role"
@@ -68,13 +85,18 @@ resource "aws_iam_role_policy_attachment" "ssm_core" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+resource "aws_iam_role_policy_attachment" "efs_client" {
+  role       = aws_iam_role.ec2_ssm.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonElasticFileSystemClientReadWriteAccess"
+}
+
 resource "aws_iam_instance_profile" "ec2_ssm" {
   name = "asg-alb-ec2-ssm-profile"
   role = aws_iam_role.ec2_ssm.name
 }
 
 # ========================================================
-# 2. Security Groups (Least Privilege: EC2 accepts HTTP only from ALB)
+# 2. Security Groups (Least Privilege: EC2 accepts HTTP strictly from ALB)
 # ========================================================
 resource "aws_security_group" "alb" {
   name        = "devops-alb-sg"
@@ -127,6 +149,10 @@ resource "aws_lb" "app" {
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = data.aws_subnets.public.ids
+
+  tags = {
+    Name = "devops-app-alb"
+  }
 }
 
 resource "aws_lb_target_group" "app" {
@@ -148,6 +174,10 @@ resource "aws_lb_target_group" "app" {
   }
 
   deregistration_delay = 15
+
+  tags = {
+    Name = "devops-app-tg"
+  }
 }
 
 resource "aws_lb_listener" "http" {
@@ -162,11 +192,11 @@ resource "aws_lb_listener" "http" {
 }
 
 # ========================================================
-# 4. Launch Template (IMDSv2 + Detailed Monitoring)
+# 4. Launch Template (Golden AMI + IMDSv2 + Detailed Monitoring)
 # ========================================================
 resource "aws_launch_template" "app" {
   name_prefix   = "devops-app-lt-"
-  image_id      = data.aws_ssm_parameter.al2023_ami.value
+  image_id      = data.aws_ami.golden_ami.id
   instance_type = "t3.micro"
 
   iam_instance_profile {
@@ -174,7 +204,12 @@ resource "aws_launch_template" "app" {
   }
 
   vpc_security_group_ids = [aws_security_group.ec2.id]
-  user_data              = filebase64("${path.module}/user-data.sh")
+
+  user_data = base64encode(templatefile("${path.module}/user-data.sh", {
+    efs_id        = aws_efs_file_system.shared_web.id
+    assets_bucket = aws_s3_bucket.app_assets.id
+    aws_region    = var.aws_region
+  }))
 
   monitoring {
     enabled = true
@@ -189,8 +224,14 @@ resource "aws_launch_template" "app" {
   tag_specifications {
     resource_type = "instance"
     tags = {
-      Name = "devops-asg-web-instance"
+      Name      = "devops-asg-web-instance"
+      Role      = "DevOps Engineer"
+      Candidate = "Ankit Gawade"
     }
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
@@ -199,7 +240,7 @@ resource "aws_launch_template" "app" {
 # ========================================================
 resource "aws_autoscaling_group" "app" {
   name                      = "devops-app-asg"
-  min_size                  = 1
+  min_size                  = 2
   max_size                  = 4
   desired_capacity          = 2
   vpc_zone_identifier       = data.aws_subnets.public.ids
@@ -214,6 +255,28 @@ resource "aws_autoscaling_group" "app" {
 
   instance_refresh {
     strategy = "Rolling"
+    preferences {
+      min_healthy_percentage = 50
+      instance_warmup        = 60
+    }
+    triggers = ["tag"]
+  }
+
+  depends_on = [
+    aws_efs_mount_target.subnets,
+    aws_s3_object.website_files
+  ]
+
+  tag {
+    key                 = "Name"
+    value               = "devops-asg-web-instance"
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Role"
+    value               = "DevOps Engineer"
+    propagate_at_launch = true
   }
 }
 
@@ -237,6 +300,11 @@ output "alb_dns_name" {
   value = "http://${aws_lb.app.dns_name}"
 }
 
+output "golden_ami_id" {
+  description = "Custom Pre-baked Golden AMI ID"
+  value       = data.aws_ami.golden_ami.id
+}
+
 output "asg_name" {
   value = aws_autoscaling_group.app.name
 }
@@ -244,4 +312,3 @@ output "asg_name" {
 output "target_group_arn" {
   value = aws_lb_target_group.app.arn
 }
-

@@ -1,0 +1,5 @@
+{
+  "ami_id": "ami-05b8c4c41b13f8f47",
+  "name": "devops-golden-ami-al2023-v1",
+  "base_ami": "ami-096ef200a877f36af"
+}
