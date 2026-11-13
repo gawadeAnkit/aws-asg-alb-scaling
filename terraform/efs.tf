@@ -62,3 +62,4 @@ output "efs_dns_name" {
   description = "Amazon EFS File System DNS Name"
   value       = aws_efs_file_system.shared_web.dns_name
 }
+

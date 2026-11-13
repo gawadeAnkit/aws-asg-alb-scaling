@@ -1671,5 +1671,11 @@ footer {
     font-weight: 700;
 }
 body {
-    padding-top: 42px !important;
+    padding-top: 38px !important;
+}
+header {
+    top: 38px !important;
+}
+#hero {
+    margin-top: 98px !important;
 }

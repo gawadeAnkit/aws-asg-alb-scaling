@@ -93,3 +93,4 @@ output "assets_bucket_name" {
   description = "S3 Assets Bucket Name"
   value       = aws_s3_bucket.app_assets.id
 }
+

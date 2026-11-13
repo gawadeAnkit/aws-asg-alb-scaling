@@ -28,3 +28,4 @@ for i in range(8):
 print("\nSummary of Nodes Responding:")
 for iid, az in nodes.items():
     print(f" - Node: {iid} in AZ: {az}")
+
