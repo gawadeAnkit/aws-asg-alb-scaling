@@ -1,6 +1,6 @@
 # efs.tf - Production-Grade Multi-AZ Amazon Elastic File System (EFS)
 # Candidate: Ankit Gawade <ankitgawade1234@gmail.com>
-# Role: DevOps Engineer | Itvedant Education Pvt. Ltd.
+# Role: DevOps Engineer 
 
 resource "aws_efs_file_system" "shared_web" {
   creation_token   = "devops-asg-shared-efs"
